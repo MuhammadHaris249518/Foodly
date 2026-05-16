@@ -48,3 +48,5 @@ pip-delete-this-directory.txt
 .vscode/
 *.swp
 *.swo
+node_modules
+node_modules

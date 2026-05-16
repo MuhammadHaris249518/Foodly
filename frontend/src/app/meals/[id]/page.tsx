@@ -129,6 +129,12 @@ export default async function MealDetailPage({ params }: { params: Promise<{ id:
                 </div>
               )}
 
+              <div className="mt-6">
+                <Link href={`/meals/${id}/report`} className="inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-full font-bold hover:bg-emerald-700">
+                  Report Price Change
+                </Link>
+              </div>
+
             </div>
           </div>
         </div>

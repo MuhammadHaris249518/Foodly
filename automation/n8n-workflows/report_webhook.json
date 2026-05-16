@@ -1,0 +1,70 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "price-report",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d08fcc6e-4d09-4ede-ac6e-5707ea047000",
+      "name": "Webhook",
+      "webhookId": "d9bb1080-08fd-42e1-afd7-cda912544e3f"
+    },
+    {
+      "parameters": {
+        "sendTo": "muhammadharis13221@gmail.com",
+        "subject": "Price change approval request",
+        "message": "=<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);\">\n  \n  <div style=\"border-bottom: 2px solid #3b82f6; padding-bottom: 12px; margin-bottom: 20px;\">\n    <h3 style=\"color: #1e3a8a; margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.5px;\">\n      🔔 Price Change Approval Request\n    </h3>\n  </div>\n\n  <table style=\"width: 100%; border-collapse: collapse; margin-bottom: 24px;\">\n    <tr>\n      <td style=\"padding: 8px 0; color: #64748b; font-size: 14px; width: 35%;\"><strong>Item:</strong></td>\n      <td style=\"padding: 8px 0; color: #0f172a; font-size: 14px;\">{{ $json.body.itemName }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; color: #64748b; font-size: 14px;\"><strong>Old Price:</strong></td>\n      <td style=\"padding: 8px 0; color: #ef4444; font-size: 14px; text-decoration: line-through;\">${{ $json.body.oldPrice }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; color: #64748b; font-size: 14px;\"><strong>New Price:</strong></td>\n      <td style=\"padding: 8px 0; color: #22c55e; font-size: 14px; font-weight: bold;\">${{ $json.body.newPrice }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; color: #64748b; font-size: 14px;\"><strong>Reported By:</strong></td>\n      <td style=\"padding: 8px 0; color: #0f172a; font-size: 14px;\">{{ $json.body.reporter }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; color: #64748b; font-size: 14px; vertical-align: top;\"><strong>Note:</strong></td>\n      <td style=\"padding: 8px 0; color: #334155; font-size: 14px; font-style: italic;\">\n        {{ $json.body.note ? $json.body.note : 'No notes provided.' }}\n      </td>\n    </tr>\n  </table>\n\n  <div style=\"background-color: #f8fafc; padding: 12px; border-radius: 6px; text-align: center;\">\n    <p style=\"margin: 0; font-size: 12px; color: #94a3b8;\">\n      This is an automated alert triggered from n8n. Please review this change in your dashboard.\n    </p>\n  </div>\n\n</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "203b2140-b415-4f39-9011-48d9ffdb037e",
+      "name": "Send a message",
+      "webhookId": "bc109ceb-7c75-4d9d-a70b-4f8d51c1631a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "h4KJJ7RpXuiS4p0j",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "73f42d97-abc8-4755-95d6-5d398d9b7078",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03f348edf8a8ede0c167b07c4b2e69f94659031c1256f33245dace3aa2c2110c"
+  },
+  "id": "uSLWbrbFj7rYwIFX",
+  "tags": []
+}

@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .core.config import settings
-from .api.endpoints import meals
+from .api.endpoints import meals, reports
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -15,6 +16,14 @@ app.add_middleware(
 )
 
 app.include_router(meals.router, prefix="/api/v1/meals", tags=["meals"])
+app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+
+# Serve uploaded files during development
+import os
+uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+uploads_dir = os.path.abspath(uploads_dir)
+if os.path.isdir(uploads_dir):
+    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 @app.get("/")
 def read_root():

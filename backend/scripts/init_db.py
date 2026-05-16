@@ -6,7 +6,8 @@ from sqlalchemy import text
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from app.core.database import engine, Base
-from app.models.meal import Meal # Ensure models are imported
+from app.models.meal import Meal # Ensure meal model is imported
+from app.models.pending_verification import PendingVerification # Ensure pending verification model is imported
 
 def init_db():
     print("Connecting to database...")

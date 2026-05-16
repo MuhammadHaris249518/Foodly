@@ -8,6 +8,7 @@ from ...core.database import get_db
 from ...models import meal as meal_model
 from ...schemas import meal as meal_schema
 from ai.agents.agents import generate_value_insight
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 router = APIRouter()
 
@@ -65,12 +66,34 @@ def read_meal_detail(meal_id: int, db: Session = Depends(get_db)):
             "price": simulated_price if i != 0 else base_price # Ensure current month is exact price
         })
         
-    ai_insight = generate_value_insight(
-        name=meal.name,
-        price=meal.price,
-        location=meal.location,
-        description=meal.description or ""
-    )
+    # Run AI insight generation with a short timeout so page render isn't blocked by slow external APIs
+    try:
+        ex = ThreadPoolExecutor(max_workers=1)
+        future = ex.submit(
+            generate_value_insight,
+            name=meal.name,
+            price=meal.price,
+            location=meal.location,
+            description=meal.description or ""
+        )
+        try:
+            ai_insight = future.result(timeout=1.5)
+        except FuturesTimeoutError:
+            try:
+                future.cancel()
+            except Exception:
+                pass
+            ai_insight = "AI analysis temporarily unavailable (timed out)."
+        except Exception:
+            ai_insight = "This looks like a great meal option, but our AI value analysis is currently unreachable."
+        finally:
+            # Do not wait for the worker thread to finish — shutdown without waiting
+            try:
+                ex.shutdown(wait=False)
+            except Exception:
+                pass
+    except Exception:
+        ai_insight = "This looks like a great meal option, but our AI value analysis is currently unreachable."
     
     return {
         "meal": {
