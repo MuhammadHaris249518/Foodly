@@ -3,6 +3,16 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
+
+const MapPanel = dynamic(() => import('../components/MapPanel'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[420px] w-full rounded-[2rem] border border-slate-100 bg-white shadow-sm flex items-center justify-center text-slate-400">
+      Loading map...
+    </div>
+  ),
+});
 
 interface Meal {
   id: number;
@@ -13,23 +23,55 @@ interface Meal {
   image_url: string;
 }
 
+type SavedMeal = Meal;
+
 export default function HomePage() {
   // 1. State management
   const [searchTerm, setSearchTerm] = useState("");
   const [budget, setBudget] = useState(500);
   const [meals, setMeals] = useState<Meal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedLocation, setSelectedLocation] = useState({
+    lat: 33.6844,
+    lng: 73.0479,
+  });
+  const [radiusKm] = useState(3);
+  const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
+
+  const loadSavedMeals = () => {
+    if (typeof window === "undefined") return [] as SavedMeal[];
+    const raw = window.localStorage.getItem("savedMeals");
+    if (!raw) return [] as SavedMeal[];
+    try {
+      return JSON.parse(raw) as SavedMeal[];
+    } catch {
+      return [] as SavedMeal[];
+    }
+  };
+
+  useEffect(() => {
+    setSavedMeals(loadSavedMeals());
+  }, []);
 
   // Fetch meals from backend
   useEffect(() => {
     const fetchMeals = async () => {
       setIsLoading(true);
       try {
-        const query = new URLSearchParams();
-        query.append('budget', budget.toString());
-        if (searchTerm) query.append('search', searchTerm);
+        const baseQuery = new URLSearchParams();
+        baseQuery.append('budget', budget.toString());
+        if (searchTerm) baseQuery.append('search', searchTerm);
 
-        const response = await fetch(`http://localhost:8000/api/v1/meals/?${query.toString()}`);
+        const nearbyQuery = new URLSearchParams(baseQuery);
+        nearbyQuery.append('lat', selectedLocation.lat.toString());
+        nearbyQuery.append('lng', selectedLocation.lng.toString());
+        nearbyQuery.append('radius_km', radiusKm.toString());
+
+        let response = await fetch(`http://localhost:8000/api/v1/meals/nearby?${nearbyQuery.toString()}`);
+        if (!response.ok) {
+          response = await fetch(`http://localhost:8000/api/v1/meals/?${baseQuery.toString()}`);
+        }
+
         if (response.ok) {
           const data = await response.json();
           setMeals(data);
@@ -43,7 +85,44 @@ export default function HomePage() {
 
     const timer = setTimeout(fetchMeals, 300); // Debounce
     return () => clearTimeout(timer);
-  }, [budget, searchTerm]);
+  }, [budget, searchTerm, selectedLocation, radiusKm]);
+
+  const isSaved = (mealId: number) => savedMeals.some((meal) => meal.id === mealId);
+
+  const saveMeal = async (meal: Meal) => {
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("authToken") : null;
+    if (token) {
+      try {
+        await fetch(`http://localhost:8000/api/v1/meals/${meal.id}/save`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      } catch (error) {
+        console.error("Error saving meal:", error);
+      }
+      setSavedMeals((prev) => {
+        if (prev.some((item) => item.id === meal.id)) {
+          return prev;
+        }
+        const next = [...prev, meal];
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("savedMeals", JSON.stringify(next));
+        }
+        return next;
+      });
+      return;
+    }
+
+    const updated = isSaved(meal.id)
+      ? savedMeals.filter((item) => item.id !== meal.id)
+      : [...savedMeals, meal];
+    setSavedMeals(updated);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("savedMeals", JSON.stringify(updated));
+    }
+  };
 
   return (
     <main className="min-h-screen bg-[#FDFCFB] flex flex-col items-center p-6 pt-20 md:pt-32 font-[family-name:var(--font-outfit)]">
@@ -60,6 +139,14 @@ export default function HomePage() {
         <p className="text-slate-500 text-lg md:text-xl max-w-md mx-auto">
           The north star for budget-conscious food discovery in Islamabad.
         </p>
+        <div className="mt-4 flex items-center justify-center gap-4">
+          <Link href="/saved" className="text-sm font-bold text-emerald-700 hover:text-emerald-600">
+            View saved meals
+          </Link>
+          <Link href="/profile" className="text-sm font-bold text-slate-500 hover:text-slate-700">
+            Profile
+          </Link>
+        </div>
       </motion.div>
 
       {/* --- SEARCH & BUDGET CONTROLS --- */}
@@ -130,8 +217,21 @@ export default function HomePage() {
         </motion.div>
       </div>
 
-      {/* --- RESULTS GRID --- */}
-      <div className="w-full max-w-5xl mt-20">
+      {/* --- MAP + RESULTS --- */}
+      <div className="w-full max-w-5xl mt-20 space-y-10">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-2xl font-bold text-slate-900">Choose a location</h2>
+            <span className="text-sm text-slate-400">
+              {selectedLocation.lat.toFixed(5)}, {selectedLocation.lng.toFixed(5)}
+            </span>
+          </div>
+          <MapPanel
+            selected={selectedLocation}
+            onSelect={(coords) => setSelectedLocation(coords)}
+          />
+        </div>
+
         <div className="flex items-center justify-between mb-8 px-4">
           <h2 className="text-2xl font-bold text-slate-900">Best matches for you</h2>
           <span className="text-sm text-slate-400">{isLoading ? "Loading..." : `${meals.length} results found`}</span>
@@ -155,6 +255,21 @@ export default function HomePage() {
                     ) : (
                       <span className="text-4xl">🍽️</span>
                     )}
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        saveMeal(meal);
+                      }}
+                      className={`absolute top-2 right-2 h-9 w-9 rounded-full border text-sm font-bold transition-all ${
+                        isSaved(meal.id)
+                          ? "bg-emerald-600 text-white border-emerald-600"
+                          : "bg-white/90 text-slate-600 border-white/70 hover:text-emerald-600"
+                      }`}
+                      aria-label="Save meal"
+                    >
+                      {isSaved(meal.id) ? "★" : "☆"}
+                    </button>
                   </div>
                   <div className="flex-1">
                     <div className="flex justify-between items-start mb-1">

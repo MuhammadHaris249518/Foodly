@@ -12,6 +12,8 @@ class Meal(Base):
     description = Column(String, nullable=True)
     confidence = Column(Float, default=100.0)
     image_url = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     # Vector embedding for semantic search (e.g., 1536 dimensions for OpenAI or similar)
     embedding = Column(Vector(1536), nullable=True)
 

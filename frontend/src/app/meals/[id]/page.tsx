@@ -34,6 +34,9 @@ export default async function MealDetailPage({ params }: { params: Promise<{ id:
         <Link href="/" className="inline-flex items-center gap-2 text-emerald-400 hover:text-emerald-300 font-medium mb-8 transition-colors">
           <span>&larr;</span> Back to Search
         </Link>
+        <Link href="/saved" className="ml-4 inline-flex items-center gap-2 text-slate-300 hover:text-white font-medium mb-8 transition-colors">
+          Saved meals
+        </Link>
         
         {/* GLASSMORPHISM CARD */}
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-[3rem] p-8 md:p-12 overflow-hidden relative">

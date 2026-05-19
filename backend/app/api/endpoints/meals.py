@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import random
 from ...core.database import get_db
 from ...models import meal as meal_model
 from ...schemas import meal as meal_schema
+from ...services.embeddings import embed_query
+from ...services.auth import get_current_user
+from ...models.saved_meal import SavedMeal
+from ...models.user import User
 from ai.agents.agents import generate_value_insight
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
@@ -27,6 +31,45 @@ def read_meals(
         query = query.filter(meal_model.Meal.price <= budget)
         
     if search:
+        query_embedding = None
+        try:
+            query_embedding = embed_query(search)
+        except Exception:
+            query_embedding = None
+
+        if query_embedding:
+            query = query.filter(meal_model.Meal.embedding.isnot(None))
+            query = query.order_by(meal_model.Meal.embedding.op("<=>")(query_embedding))
+        else:
+            search_fmt = f"%{search}%"
+            query = query.filter(
+                or_(
+                    meal_model.Meal.name.ilike(search_fmt),
+                    meal_model.Meal.location.ilike(search_fmt)
+                )
+            )
+        
+    meals = query.offset(skip).limit(limit).all()
+    return meals
+
+@router.get("/nearby", response_model=List[meal_schema.Meal])
+def read_meals_nearby(
+    lat: float,
+    lng: float,
+    radius_km: float = 3.0,
+    budget: float | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    if radius_km <= 0:
+        raise HTTPException(status_code=400, detail="radius_km must be greater than 0")
+
+    query = db.query(meal_model.Meal)
+
+    if budget is not None:
+        query = query.filter(meal_model.Meal.price <= budget)
+
+    if search:
         search_fmt = f"%{search}%"
         query = query.filter(
             or_(
@@ -34,9 +77,23 @@ def read_meals(
                 meal_model.Meal.location.ilike(search_fmt)
             )
         )
-        
-    meals = query.offset(skip).limit(limit).all()
-    return meals
+
+    query = query.filter(
+        meal_model.Meal.latitude.isnot(None),
+        meal_model.Meal.longitude.isnot(None)
+    )
+
+    user_point = func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326)
+    meal_point = func.ST_SetSRID(
+        func.ST_MakePoint(meal_model.Meal.longitude, meal_model.Meal.latitude),
+        4326
+    )
+    distance_m = func.ST_DistanceSphere(meal_point, user_point)
+
+    query = query.filter(distance_m <= radius_km * 1000.0)
+    query = query.order_by(distance_m.asc())
+
+    return query.all()
 
 @router.post("/", response_model=meal_schema.Meal)
 def create_meal(meal: meal_schema.MealCreate, db: Session = Depends(get_db)):
@@ -45,6 +102,27 @@ def create_meal(meal: meal_schema.MealCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_meal)
     return db_meal
+
+@router.post("/{meal_id}/save", response_model=meal_schema.Meal)
+def save_meal(
+    meal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    meal = db.query(meal_model.Meal).filter(meal_model.Meal.id == meal_id).first()
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    existing = (
+        db.query(SavedMeal)
+        .filter(SavedMeal.user_id == current_user.id, SavedMeal.meal_id == meal_id)
+        .first()
+    )
+    if not existing:
+        db.add(SavedMeal(user_id=current_user.id, meal_id=meal_id))
+        db.commit()
+
+    return meal
 
 @router.get("/{meal_id}", response_model=Dict[str, Any])
 def read_meal_detail(meal_id: int, db: Session = Depends(get_db)):

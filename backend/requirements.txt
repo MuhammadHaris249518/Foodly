@@ -36,7 +36,10 @@ pycparser==3.0
 pydantic==2.13.3
 pydantic-settings==2.14.0
 pydantic_core==2.46.3
+email-validator==2.1.1
 python-dotenv==1.2.2
+python-jose==3.3.0
+passlib[bcrypt]==1.7.4
 PyYAML==6.0.3
 requests==2.33.1
 requests-toolbelt==1.0.0

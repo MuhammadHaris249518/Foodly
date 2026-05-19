@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .core.config import settings
-from .api.endpoints import meals, reports
+from .api.endpoints import meals, reports, auth, users
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -17,6 +17,8 @@ app.add_middleware(
 
 app.include_router(meals.router, prefix="/api/v1/meals", tags=["meals"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 
 # Serve uploaded files during development
 import os

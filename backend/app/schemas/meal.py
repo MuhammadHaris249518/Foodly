@@ -8,6 +8,8 @@ class MealBase(BaseModel):
     description: Optional[str] = None
     confidence: float = 100.0
     image_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class MealCreate(MealBase):
     pass
