@@ -40,7 +40,7 @@ def read_profile(
     )
     report_count = (
         db.query(PendingVerification)
-        .filter(PendingVerification.reporter_name == current_user.email)
+        .filter(PendingVerification.reporter_user_id == current_user.id)
         .count()
     )
     return UserProfileOut(

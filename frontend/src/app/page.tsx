@@ -1,229 +1,321 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import Link from 'next/link';
-import dynamic from 'next/dynamic';
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import type { Meal, LivePriceData, LiveSearchStatus, BackendStatus } from "../lib/types";
+import { apiUrl, CONFIDENCE_COLOR } from "../lib/api";
 
-const MapPanel = dynamic(() => import('../components/MapPanel'), {
+const MapPanel = dynamic(() => import("../components/MapPanel"), {
   ssr: false,
   loading: () => (
-    <div className="h-[420px] w-full rounded-[2rem] border border-slate-100 bg-white shadow-sm flex items-center justify-center text-slate-400">
-      Loading map...
+    <div className="h-[380px] w-full rounded-2xl border border-slate-100 bg-slate-50 flex items-center justify-center text-slate-400 text-sm font-medium">
+      Loading map…
     </div>
   ),
 });
 
-interface Meal {
-  id: number;
-  name: string;
-  price: number;
-  location: string;
-  confidence: number;
-  image_url: string;
-}
-
-type SavedMeal = Meal;
-
 export default function HomePage() {
-  // 1. State management
   const [searchTerm, setSearchTerm] = useState("");
-  const [budget, setBudget] = useState(500);
+  const [budget, setBudget] = useState(600);
+  const [sliderBudget, setSliderBudget] = useState(600); // local display only — committed on release
   const [meals, setMeals] = useState<Meal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedLocation, setSelectedLocation] = useState({
-    lat: 33.6844,
-    lng: 73.0479,
-  });
-  const [radiusKm] = useState(3);
-  const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
+  const [selectedLocation, setSelectedLocation] = useState({ lat: 33.6844, lng: 73.0479 });
+  const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
 
-  const loadSavedMeals = () => {
-    if (typeof window === "undefined") return [] as SavedMeal[];
-    const raw = window.localStorage.getItem("savedMeals");
-    if (!raw) return [] as SavedMeal[];
-    try {
-      return JSON.parse(raw) as SavedMeal[];
-    } catch {
-      return [] as SavedMeal[];
-    }
-  };
+  // Backend health state — polls until both server and database are reachable
+  const [backendReady, setBackendReady] = useState(false);
+  const [backendConnecting, setBackendConnecting] = useState(true);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>("starting");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // AI Agent States
+  const [liveSearchStatus, setLiveSearchStatus] = useState<LiveSearchStatus>("idle");
+  const [liveSearchMessage, setLiveSearchMessage] = useState("");
+  const [livePriceData, setLivePriceData] = useState<LivePriceData | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    setSavedMeals(loadSavedMeals());
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem("savedMeals") : null;
+    if (raw) {
+      try {
+        const parsed: Meal[] = JSON.parse(raw);
+        setSavedIds(new Set(parsed.map((m) => m.id)));
+      } catch {}
+    }
   }, []);
 
-  // Fetch meals from backend
+  // Poll the backend root every 2 s until it responds, then set backendReady.
+  // This prevents the "Failed to fetch" console error that fires before uvicorn is up.
   useEffect(() => {
-    const fetchMeals = async () => {
-      setIsLoading(true);
+    let cancelled = false;
+
+    const check = async () => {
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 1500);
       try {
-        const baseQuery = new URLSearchParams();
-        baseQuery.append('budget', budget.toString());
-        if (searchTerm) baseQuery.append('search', searchTerm);
-
-        const nearbyQuery = new URLSearchParams(baseQuery);
-        nearbyQuery.append('lat', selectedLocation.lat.toString());
-        nearbyQuery.append('lng', selectedLocation.lng.toString());
-        nearbyQuery.append('radius_km', radiusKm.toString());
-
-        let response = await fetch(`http://localhost:8000/api/v1/meals/nearby?${nearbyQuery.toString()}`);
-        if (!response.ok) {
-          response = await fetch(`http://localhost:8000/api/v1/meals/?${baseQuery.toString()}`);
+        const res = await fetch(apiUrl("/health"), { signal: abort.signal });
+        if (cancelled) return;
+        if (res.ok) {
+          // Server + database both up
+          setBackendStatus("ready");
+          setBackendReady(true);
+          setBackendConnecting(false);
+          if (pollRef.current) clearInterval(pollRef.current);
+        } else if (res.status === 503) {
+          // Server up but database not ready yet — keep polling, update label
+          setBackendStatus("db_error");
         }
-
-        if (response.ok) {
-          const data = await response.json();
-          setMeals(data);
-        }
-      } catch (error) {
-        console.error('Error fetching meals:', error);
+        // any other non-ok status: keep polling silently
+      } catch {
+        // Server not up yet — silent, keep polling
+        if (!cancelled) setBackendStatus("starting");
       } finally {
-        setIsLoading(false);
+        clearTimeout(timeout);
       }
     };
 
-    const timer = setTimeout(fetchMeals, 300); // Debounce
-    return () => clearTimeout(timer);
-  }, [budget, searchTerm, selectedLocation, radiusKm]);
+    check();
+    pollRef.current = setInterval(check, 2000);
 
-  const isSaved = (mealId: number) => savedMeals.some((meal) => meal.id === mealId);
+    return () => {
+      cancelled = true;
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
-  const saveMeal = async (meal: Meal) => {
-    const token = typeof window !== "undefined" ? window.localStorage.getItem("authToken") : null;
-    if (token) {
+  useEffect(() => {
+    if (!backendReady) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setIsLoading(true);
       try {
-        await fetch(`http://localhost:8000/api/v1/meals/${meal.id}/save`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+        const nearbyQ = new URLSearchParams({
+          budget: budget.toString(),
+          lat: selectedLocation.lat.toString(),
+          lng: selectedLocation.lng.toString(),
+          radius_km: "3",
+          ...(searchTerm ? { search: searchTerm } : {}),
         });
-      } catch (error) {
-        console.error("Error saving meal:", error);
+
+        let res = await fetch(`${apiUrl("/api/v1/meals/nearby")}?${nearbyQ}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const baseQ = new URLSearchParams({ budget: budget.toString(), ...(searchTerm ? { search: searchTerm } : {}) });
+          res = await fetch(`${apiUrl("/api/v1/meals/")}?${baseQ}`, { signal: controller.signal });
+        }
+        if (res.ok) setMeals(await res.json());
+
+        // Stop any previous running agent connection
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
+
+        // Trigger AI Agent Search if there's a search term
+        if (searchTerm) {
+          setLiveSearchStatus("starting");
+          setLiveSearchMessage("Connecting to AI agent...");
+          setLivePriceData(null);
+          
+          const es = new EventSource(`${apiUrl("/api/v1/agent/live-price")}?query=${encodeURIComponent(searchTerm)}`);
+          eventSourceRef.current = es;
+
+          es.onmessage = (event) => {
+              const data = JSON.parse(event.data);
+              
+              if (data.status === "searching" || data.status === "extracting" || data.status === "starting") {
+                 setLiveSearchStatus(data.status);
+                 setLiveSearchMessage(data.message);
+              } else if (data.status === "complete") {
+                 setLiveSearchStatus("complete");
+                 setLivePriceData(data.data);
+                 es.close();
+              } else if (data.status === "failed" || data.status === "error") {
+                 setLiveSearchStatus("failed");
+                 setLiveSearchMessage(data.message);
+                 es.close();
+              }
+          };
+
+          es.onerror = (err) => {
+              console.error("SSE Error:", err);
+              setLiveSearchStatus("failed");
+              setLiveSearchMessage("Connection to AI agent lost.");
+              es.close();
+          };
+        } else {
+          setLiveSearchStatus("idle");
+          setLivePriceData(null);
+        }
+
+      } catch (e: unknown) {
+        if ((e as Error).name !== "AbortError") console.error(e);
+      } finally {
+        setIsLoading(false);
       }
-      setSavedMeals((prev) => {
-        if (prev.some((item) => item.id === meal.id)) {
-          return prev;
-        }
-        const next = [...prev, meal];
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem("savedMeals", JSON.stringify(next));
-        }
-        return next;
-      });
-      return;
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, [budget, searchTerm, selectedLocation, backendReady]);
+
+  const toggleSave = async (meal: Meal, e: React.MouseEvent) => {
+    e.preventDefault();
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("authToken") : null;
+    const next = new Set(savedIds);
+
+    if (savedIds.has(meal.id)) {
+      next.delete(meal.id);
+    } else {
+      next.add(meal.id);
+      if (token) {
+        fetch(`${apiUrl(`/api/v1/meals/${meal.id}/save`)}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(console.error);
+      }
     }
 
-    const updated = isSaved(meal.id)
-      ? savedMeals.filter((item) => item.id !== meal.id)
-      : [...savedMeals, meal];
-    setSavedMeals(updated);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("savedMeals", JSON.stringify(updated));
-    }
+    setSavedIds(next);
+    const allSaved: Meal[] = JSON.parse(window.localStorage.getItem("savedMeals") || "[]");
+    const updated = next.has(meal.id)
+      ? [...allSaved.filter((m) => m.id !== meal.id), meal]
+      : allSaved.filter((m) => m.id !== meal.id);
+    window.localStorage.setItem("savedMeals", JSON.stringify(updated));
   };
 
   return (
-    <main className="min-h-screen bg-[#FDFCFB] flex flex-col items-center p-6 pt-20 md:pt-32 font-[family-name:var(--font-outfit)]">
+    <main className="min-h-screen bg-[#FAFAF9] font-[family-name:var(--font-outfit)]">
 
-      {/* --- HERO SECTION --- */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="text-center mb-12"
-      >
-        <h1 className="text-6xl md:text-8xl font-black text-slate-900 mb-4 tracking-tighter">
-          Foodly<span className="text-emerald-500">.</span>
-        </h1>
-        <p className="text-slate-500 text-lg md:text-xl max-w-md mx-auto">
-          The north star for budget-conscious food discovery in Islamabad.
-        </p>
-        <div className="mt-4 flex items-center justify-center gap-4">
-          <Link href="/saved" className="text-sm font-bold text-emerald-700 hover:text-emerald-600">
-            View saved meals
-          </Link>
-          <Link href="/profile" className="text-sm font-bold text-slate-500 hover:text-slate-700">
-            Profile
-          </Link>
-        </div>
-      </motion.div>
-
-      {/* --- SEARCH & BUDGET CONTROLS --- */}
-      <div className="w-full max-w-2xl space-y-8">
-        {/* Search Bar */}
+      {/* Backend status pill — auto-hides once server + database are ready */}
+      <AnimatePresence>
+        {backendConnecting && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            transition={{ duration: 0.3 }}
+            className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 px-5 py-2.5 rounded-full text-sm font-semibold shadow-2xl pointer-events-none ${
+              backendStatus === "db_error"
+                ? "bg-rose-600 text-white"
+                : "bg-slate-900 text-white"
+            }`}
+          >
+            <span className="relative flex h-2.5 w-2.5">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${backendStatus === "db_error" ? "bg-rose-300" : "bg-amber-400"}`} />
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${backendStatus === "db_error" ? "bg-rose-300" : "bg-amber-400"}`} />
+            </span>
+            {backendStatus === "db_error"
+              ? "Database unavailable — is PostgreSQL running?"
+              : "Backend starting…"}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* HERO */}
+      <section className="mx-auto max-w-6xl px-6 pt-16 pb-12">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
-          className="relative group"
+          initial={{ opacity: 0, y: -16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="text-center"
         >
-          <div className="relative flex items-center">
+          <span className="inline-block mb-4 rounded-full bg-emerald-50 border border-emerald-100 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-emerald-700">
+            Islamabad &amp; Rawalpindi
+          </span>
+          <h1 className="text-5xl md:text-7xl font-black text-slate-900 tracking-tighter mb-4">
+            Find food that fits<br />
+            <span className="text-emerald-500">your budget.</span>
+          </h1>
+          <p className="text-slate-500 text-base md:text-lg max-w-xl mx-auto">
+            Live prices, AI-verified confidence scores, and community-driven updates — all within your budget.
+          </p>
+        </motion.div>
+
+        {/* SEARCH + BUDGET */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15, duration: 0.5 }}
+          className="mt-10 max-w-2xl mx-auto space-y-4"
+        >
+          {/* Search */}
+          <div className="relative flex items-center shadow-lg shadow-slate-200/60 rounded-2xl">
+            <svg className="absolute left-5 w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+            </svg>
             <input
               type="text"
-              placeholder="What's your budget craving?"
+              placeholder="Search meals, restaurants…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-20 pl-8 pr-40 rounded-full border border-slate-200 bg-white shadow-2xl focus:outline-none focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 text-xl text-slate-900 transition-all duration-300 placeholder:text-slate-400"
+              className="w-full h-14 pl-14 pr-36 rounded-2xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 text-base text-slate-900 placeholder:text-slate-400 transition-all"
             />
-            <button className="absolute right-3 top-3 bottom-3 px-10 bg-emerald-600 text-white font-bold rounded-full hover:bg-emerald-700 transition-all active:scale-95 shadow-lg shadow-emerald-500/20">
+            <button className="absolute right-2 h-10 px-6 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all active:scale-95">
               Search
             </button>
           </div>
-        </motion.div>
 
-        {/* Budget Slider - Compact Professional Design */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-slate-900 p-6 md:p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group"
-        >
-          {/* Decorative background glow */}
-          <div className="absolute -top-24 -right-24 w-48 h-48 bg-emerald-500/10 blur-[80px] rounded-full group-hover:bg-emerald-500/20 transition-all duration-700"></div>
-
-          <div className="flex justify-between items-center mb-6 relative z-10">
-            <div>
-              <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500 mb-1">Set Your Limit</h3>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-3xl font-black text-white tracking-tighter">{budget}</span>
-                <span className="text-sm font-bold text-emerald-500">PKR</span>
+          {/* Budget Slider */}
+          <div className="bg-slate-900 rounded-2xl px-6 py-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-0.5">Max Budget</p>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl font-black text-white">{sliderBudget.toLocaleString()}</span>
+                  <span className="text-xs font-bold text-emerald-400">PKR</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                {[200, 500, 1000, 2000].map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => { setBudget(v); setSliderBudget(v); }}
+                    className={`text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all ${
+                      sliderBudget === v ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    }`}
+                  >
+                    {v}
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="text-right">
-              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-3 py-1.5 rounded-lg border border-emerald-400/20">
-                Budget Optimizer
-              </span>
-            </div>
-          </div>
-
-          <div className="relative h-4 flex items-center">
             <input
               type="range"
               min="100"
               max="2000"
               step="50"
-              value={budget}
-              onChange={(e) => setBudget(parseInt(e.target.value))}
-              className="w-full h-1 bg-slate-800 rounded-full appearance-none cursor-pointer accent-emerald-500"
+              value={sliderBudget}
+              onChange={(e) => setSliderBudget(parseInt(e.target.value))}
+              onMouseUp={(e) => setBudget(parseInt((e.target as HTMLInputElement).value))}
+              onTouchEnd={(e) => setBudget(parseInt((e.target as HTMLInputElement).value))}
+              className="w-full bg-slate-700"
+              style={{ accentColor: "#10b981" }}
             />
-          </div>
-
-          <div className="flex justify-between mt-4 text-[9px] font-bold text-slate-600 uppercase tracking-widest">
-            <span>Economy</span>
-            <span>Balanced</span>
-            <span>Premium</span>
+            <div className="flex justify-between mt-2 text-[9px] font-bold uppercase tracking-widest text-slate-600">
+              <span>Economy · 100</span>
+              <span>Premium · 2000</span>
+            </div>
           </div>
         </motion.div>
-      </div>
+      </section>
 
-      {/* --- MAP + RESULTS --- */}
-      <div className="w-full max-w-5xl mt-20 space-y-10">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between px-2">
-            <h2 className="text-2xl font-bold text-slate-900">Choose a location</h2>
-            <span className="text-sm text-slate-400">
-              {selectedLocation.lat.toFixed(5)}, {selectedLocation.lng.toFixed(5)}
+      {/* MAP + RESULTS */}
+      <section className="mx-auto max-w-6xl px-6 pb-24 space-y-10">
+        {/* Map */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-bold text-slate-700">Pick a location</h2>
+            <span className="text-xs text-slate-400 font-mono">
+              {selectedLocation.lat.toFixed(4)}, {selectedLocation.lng.toFixed(4)}
             </span>
           </div>
           <MapPanel
@@ -232,73 +324,153 @@ export default function HomePage() {
           />
         </div>
 
-        <div className="flex items-center justify-between mb-8 px-4">
-          <h2 className="text-2xl font-bold text-slate-900">Best matches for you</h2>
-          <span className="text-sm text-slate-400">{isLoading ? "Loading..." : `${meals.length} results found`}</span>
+        {/* AI Agent Live Web Results */}
+        {searchTerm && liveSearchStatus !== "idle" && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 shadow-sm"
+          >
+            <div className="flex items-center gap-3 mb-2">
+              <span className="flex h-3 w-3 relative">
+                {liveSearchStatus !== "complete" && liveSearchStatus !== "failed" && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                )}
+                <span className={`relative inline-flex rounded-full h-3 w-3 ${liveSearchStatus === "complete" ? "bg-emerald-500" : liveSearchStatus === "failed" ? "bg-rose-500" : "bg-indigo-500"}`}></span>
+              </span>
+              <h3 className="font-bold text-indigo-900 flex-1">Live Web Intelligence</h3>
+            </div>
+            
+            {liveSearchStatus !== "complete" && liveSearchStatus !== "failed" && (
+              <p className="text-sm font-medium text-indigo-700 ml-6 animate-pulse">
+                {liveSearchMessage}
+              </p>
+            )}
+
+            {liveSearchStatus === "failed" && (
+              <p className="text-sm font-medium text-rose-600 ml-6">
+                {liveSearchMessage}
+              </p>
+            )}
+
+            {liveSearchStatus === "complete" && livePriceData && (
+              <div className="ml-6 mt-3 bg-white p-4 rounded-xl border border-indigo-100/50 shadow-sm flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-md">Found on Web</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${CONFIDENCE_COLOR(livePriceData.confidence)}`}>
+                        {livePriceData.confidence}% verified
+                    </span>
+                  </div>
+                  <h4 className="font-bold text-slate-900">{livePriceData.restaurant}</h4>
+                  <p className="text-sm font-medium text-slate-500">{livePriceData.meal}</p>
+                </div>
+                <div className="text-right">
+                  <span className="font-black text-emerald-600 text-2xl">
+                    {livePriceData.price_pkr.toLocaleString()}
+                  </span>
+                  <span className="text-xs font-bold text-emerald-500/70 ml-1">PKR</span>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* Results header */}
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-black text-slate-900">
+            {backendStatus === "db_error" ? "Database unavailable" : backendConnecting ? "Waiting for backend…" : isLoading ? "Finding meals…" : `${meals.length} meals found`}
+          </h2>
+          <span className="text-xs text-slate-400 font-medium">within 3 km · under {budget} PKR</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 pb-20">
-          <AnimatePresence>
-            {!isLoading && meals.map((meal) => (
-              <Link href={`/meals/${meal.id}`} key={meal.id} className="block group">
-                <motion.div
-                  layout
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  whileHover={{ y: -5 }}
-                  className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-500 flex items-center gap-6 overflow-hidden"
-                >
-                  <div className="w-24 h-24 bg-slate-100 rounded-3xl flex items-center justify-center overflow-hidden flex-shrink-0 relative group-hover:scale-105 transition-transform duration-500">
-                    {meal.image_url ? (
-                      <img src={meal.image_url} alt={meal.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <span className="text-4xl">🍽️</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        saveMeal(meal);
-                      }}
-                      className={`absolute top-2 right-2 h-9 w-9 rounded-full border text-sm font-bold transition-all ${
-                        isSaved(meal.id)
-                          ? "bg-emerald-600 text-white border-emerald-600"
-                          : "bg-white/90 text-slate-600 border-white/70 hover:text-emerald-600"
-                      }`}
-                      aria-label="Save meal"
-                    >
-                      {isSaved(meal.id) ? "★" : "☆"}
-                    </button>
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-1">
-                      <h3 className="text-xl font-bold text-slate-800">{meal.name}</h3>
-                      <span className="text-lg font-black text-emerald-600">{meal.price} <span className="text-[10px] font-bold">PKR</span></span>
+        {/* Meal Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+          <AnimatePresence mode="popLayout">
+            {!isLoading &&
+              meals.map((meal, i) => (
+                <Link href={`/meals/${meal.id}`} key={meal.id} className="block group">
+                  <motion.div
+                    layout
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ delay: i * 0.04 }}
+                    whileHover={{ y: -4 }}
+                    className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300"
+                  >
+                    {/* Image */}
+                    <div className="relative h-40 bg-slate-50 overflow-hidden">
+                      {meal.image_url ? (
+                        <img
+                          src={meal.image_url}
+                          alt={meal.name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-5xl">🍽️</div>
+                      )}
+                      {/* Save button */}
+                      <button
+                        onClick={(e) => toggleSave(meal, e)}
+                        className={`absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all shadow-md ${
+                          savedIds.has(meal.id)
+                            ? "bg-emerald-600 text-white"
+                            : "bg-white/90 text-slate-500 hover:bg-white hover:text-emerald-600"
+                        }`}
+                      >
+                        {savedIds.has(meal.id) ? "★" : "☆"}
+                      </button>
+                      {/* Confidence badge */}
+                      <span className={`absolute bottom-3 left-3 text-[10px] font-bold px-2 py-0.5 rounded-full ${CONFIDENCE_COLOR(meal.confidence)}`}>
+                        {meal.confidence}% verified
+                      </span>
                     </div>
-                    <p className="text-slate-400 text-sm mb-3">{meal.location}</p>
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-1.5 rounded-full bg-emerald-500"></div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{meal.confidence}% confidence</span>
+
+                    {/* Info */}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="font-bold text-slate-900 text-base leading-snug">{meal.name}</h3>
+                        <span className="font-black text-emerald-600 text-base whitespace-nowrap">
+                          {meal.price.toLocaleString()} <span className="text-[9px] font-bold text-emerald-500/70">PKR</span>
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400 font-medium truncate">{meal.location}</p>
                     </div>
-                  </div>
-                </motion.div>
-              </Link>
-            ))}
+                  </motion.div>
+                </Link>
+              ))}
           </AnimatePresence>
         </div>
 
+        {/* Loading skeleton */}
+        {isLoading && (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm animate-pulse">
+                <div className="h-40 bg-slate-100" />
+                <div className="p-4 space-y-2">
+                  <div className="h-4 bg-slate-100 rounded w-3/4" />
+                  <div className="h-3 bg-slate-100 rounded w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty state */}
         {!isLoading && meals.length === 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-20 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200"
+            className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200"
           >
-            <p className="text-slate-400 font-medium text-lg">No meals found under {budget} PKR. Try increasing your budget!</p>
+            <div className="text-4xl mb-4">🔍</div>
+            <p className="text-slate-600 font-semibold text-lg">No meals found</p>
+            <p className="text-slate-400 text-sm mt-1">Try increasing your budget or moving the map</p>
           </motion.div>
         )}
-      </div>
-
+      </section>
     </main>
   );
 }

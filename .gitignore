@@ -49,4 +49,10 @@ pip-delete-this-directory.txt
 *.swp
 *.swo
 node_modules
-node_modules
+
+# ================================
+# Runtime generated files
+# ================================
+backend/logs/
+backend/uploads/reports/
+*.log

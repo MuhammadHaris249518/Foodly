@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import "leaflet/dist/leaflet.css";
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -30,7 +30,7 @@ L.Icon.Default.mergeOptions({
 
 function LocationMarker({ selected, onSelect }: MapPanelProps) {
   useMapEvents({
-    click(event) {
+    click(event: { latlng: { lat: number; lng: number } }) {
       onSelect({ lat: event.latlng.lat, lng: event.latlng.lng });
     },
   });
@@ -45,24 +45,20 @@ function LocationMarker({ selected, onSelect }: MapPanelProps) {
   );
 }
 
+// This component is only ever imported with ssr:false — no isMounted guard needed.
+// The extra useState+useEffect render cycle that isMounted creates was causing
+// Leaflet to try to add layers to a map whose panes had already been removed
+// by React 19 Strict Mode's cleanup pass.
 export default function MapPanel({ selected, onSelect }: MapPanelProps) {
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (!isMounted) {
-    return (
-      <div className="h-[420px] w-full overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm flex items-center justify-center text-slate-400">
-        Loading map...
-      </div>
-    );
-  }
-
   return (
-    <div className="h-[420px] w-full overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-sm">
-      <MapContainer center={DEFAULT_CENTER} zoom={13} className="h-full w-full">
+    <div className="h-[420px] w-full overflow-hidden rounded-4xl border border-slate-100 bg-white shadow-sm">
+      <MapContainer
+        center={DEFAULT_CENTER}
+        zoom={13}
+        className="h-full w-full"
+        // key ensures Leaflet gets a fresh DOM container if the component re-mounts
+        key="foodly-map"
+      >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

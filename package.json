@@ -1,0 +1,17 @@
+{
+  "name": "foodly",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n \"API,WEB\" -c \"blue.bold,green.bold\" --kill-others-on-fail \"npm run backend\" \"npm run frontend\"",
+    "dev:watch": "concurrently -n \"API,WEB\" -c \"blue.bold,green.bold\" --kill-others-on-fail \"npm run backend:watch\" \"npm run frontend\"",
+    "backend": "cd backend && venv\\Scripts\\python run.py",
+    "backend:watch": "cd backend && venv\\Scripts\\python run.py",
+    "frontend": "npm --prefix frontend run dev",
+    "seed": "cd backend && venv\\Scripts\\python scripts/seed_islamabad.py",
+    "install:frontend": "npm --prefix frontend install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

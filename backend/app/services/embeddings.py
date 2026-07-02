@@ -27,3 +27,8 @@ def embed_query(text: str) -> Optional[List[float]]:
     config = EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS)
     result = client.models.embed_content(model=EMBEDDING_MODEL, contents=text, config=config)
     return list(result.embeddings[0].values)
+
+import asyncio
+
+async def embed_query_async(text: str) -> Optional[List[float]]:
+    return await asyncio.to_thread(embed_query, text)

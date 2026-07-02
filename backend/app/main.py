@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 from .core.config import settings
-from .api.endpoints import meals, reports, auth, users
+from .core.database import get_db
+from .api.endpoints import meals, reports, auth, users, admin, agent
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -17,8 +21,10 @@ app.add_middleware(
 
 app.include_router(meals.router, prefix="/api/v1/meals", tags=["meals"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 
 # Serve uploaded files during development
 import os
@@ -30,3 +36,12 @@ if os.path.isdir(uploads_dir):
 @app.get("/")
 def read_root():
     return {"message": f"Welcome to {settings.PROJECT_NAME} API"}
+
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "connected"}
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "error", "database": "unavailable"})
