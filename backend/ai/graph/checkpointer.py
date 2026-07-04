@@ -11,7 +11,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 # single validated settings.DATABASE_URL — one source of truth, and if it's
 # missing/insecure, app startup already failed in core/config.py before
 # this module is ever reached.
-from backend.app.core.config import settings
+from app.core.config import settings
 
 DB_URL = settings.DATABASE_URL
 if DB_URL.startswith("postgresql+psycopg2://"):

@@ -23,9 +23,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Import models and schemas
-from backend.app.models.meal import Meal
-from backend.app.models.pending_verification import PendingVerification
-from backend.app.schemas.meal import InsightResponse
+from app.models.meal import Meal
+from app.models.pending_verification import PendingVerification
+from app.schemas.meal import InsightResponse
 
 
 # --- Helper Functions for Context Retrieval ---
