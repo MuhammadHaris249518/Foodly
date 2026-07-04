@@ -10,10 +10,18 @@ from .api.endpoints import meals, reports, auth, users, admin, agent
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-# Set all CORS enabled origins
+# ── CORS: env-driven origin whitelist ───────────────────────────────────
+# CHANGED: previously allow_origins=["*"] combined with allow_credentials=True.
+# That combination is unsafe: Starlette can't literally send "*" alongside
+# credentials (disallowed by the CORS spec), so it falls back to reflecting
+# whatever Origin header the request sent — meaning ANY website could make
+# credentialed requests (with the user's JWT/cookies attached) and read the
+# response. Fixed by supplying a real closed list of trusted origins from
+# settings.cors_origins (env-driven — see core/config.py). Credentials are
+# now only ever echoed back for an origin on this explicit list.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
