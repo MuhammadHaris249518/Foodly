@@ -15,6 +15,8 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # role is never taken from the request — always defaults to "user"
+    # at the DB level (see User model). Prevents self-promotion to admin.
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
@@ -32,7 +34,7 @@ def login_user(payload: UserLogin, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    token = create_access_token(user.email)
+    token = create_access_token(user.email, user.role)
     return Token(access_token=token)
 
 

@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from ...core.database import get_db
 from ...schemas import meal as meal_schema
-from ...services.auth import get_current_user
+from ...services.auth import get_current_user, require_admin
 from ...models.user import User
 from ...services.meal import meal_service
 
@@ -33,7 +33,11 @@ def read_meals_nearby(
     return meal_service.get_nearby_meals(db=db, lat=lat, lng=lng, radius_km=radius_km, budget=budget, search=search)
 
 @router.post("/", response_model=meal_schema.Meal)
-def create_meal(meal: meal_schema.MealCreate, db: Session = Depends(get_db)):
+def create_meal(
+    meal: meal_schema.MealCreate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
     return meal_service.create_meal(db=db, meal_data=meal)
 
 @router.post("/{meal_id}/save", response_model=meal_schema.Meal)

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { API_BASE, ADMIN_SECRET, apiUrl, adminHeaders } from "../../lib/api";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { API_BASE, authHeaders } from "../../lib/api";
 
 const STATUS_TABS = [
   { key: "pending", label: "Pending", color: "text-amber-700 bg-amber-50 border-amber-200" },
@@ -67,40 +68,51 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<number | null>(null);
 
-  const headers = useMemo(() => {
-    const h: Record<string, string> = {};
-    if (ADMIN_SECRET) h["x-admin-secret"] = ADMIN_SECRET;
-    return h;
+  const [isAuthed, setIsAuthed] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
+
+  useEffect(() => {
+    setIsAuthed(!!window.localStorage.getItem("authToken"));
   }, []);
 
   useEffect(() => {
-    if (!ADMIN_SECRET) return;
+    if (!isAuthed) return;
     let ignore = false;
-    fetch(`${API_BASE}/api/v1/admin/stats`, { headers })
-      .then((r) => r.ok ? r.json() : Promise.reject(r))
+    fetch(`${API_BASE}/api/v1/admin/stats`, { headers: authHeaders() })
+      .then((r) => {
+        if (r.status === 403) { if (!ignore) setForbidden(true); return Promise.reject(r); }
+        return r.ok ? r.json() : Promise.reject(r);
+      })
       .then((d) => { if (!ignore) setStats(d as AdminStats); })
-      .catch((e) => { if (!ignore) setError(String(e)); });
+      .catch((e) => { if (!ignore && e?.status !== 403) setError(String(e)); });
     return () => { ignore = true; };
-  }, [headers]);
+  }, [isAuthed]);
 
   useEffect(() => {
-    if (!ADMIN_SECRET) return;
+    if (!isAuthed) return;
     let ignore = false;
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/api/v1/admin/reports?status=${status}`, { headers })
-      .then((r) => r.ok ? r.json() : Promise.reject(r))
+    fetch(`${API_BASE}/api/v1/admin/reports?status=${status}`, { headers: authHeaders() })
+      .then((r) => {
+        if (r.status === 403) { if (!ignore) setForbidden(true); return Promise.reject(r); }
+        return r.ok ? r.json() : Promise.reject(r);
+      })
       .then((d) => { if (!ignore) setReports(d as AdminReport[]); })
-      .catch((e) => { if (!ignore) setError(String(e)); })
+      .catch((e) => { if (!ignore && e?.status !== 403) setError(String(e)); })
       .finally(() => { if (!ignore) setLoading(false); });
     return () => { ignore = true; };
-  }, [headers, status]);
+  }, [isAuthed, status]);
 
   async function handleAction(reportId: number, action: "approve" | "reject") {
     setActionBusy(reportId);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/admin/reports/${reportId}/${action}`, { method: "POST", headers });
+      const res = await fetch(`${API_BASE}/api/v1/admin/reports/${reportId}/${action}`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (res.status === 403) { setForbidden(true); return; }
       if (!res.ok) throw new Error(await res.text());
       setReports((prev) => prev.filter((r) => r.id !== reportId));
       if (stats) {
@@ -118,6 +130,8 @@ export default function AdminDashboardPage() {
     }
   }
 
+  const canView = isAuthed && !forbidden;
+
   return (
     <main className="min-h-screen bg-[#FAFAF9] font-(family-name:--font-outfit)">
       <div className="mx-auto max-w-6xl px-6 py-10">
@@ -130,149 +144,162 @@ export default function AdminDashboardPage() {
           </p>
         </div>
 
-        {/* No secret warning */}
-        {!ADMIN_SECRET && (
-          <div className="mb-6 flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-            <span className="text-amber-500 text-lg shrink-0">⚠</span>
-            <p className="text-sm text-amber-800 font-medium">
-              <code className="font-mono bg-amber-100 px-1 rounded">NEXT_PUBLIC_ADMIN_SECRET</code> is not set.
-              Add it to your frontend <code className="font-mono bg-amber-100 px-1 rounded">.env.local</code> to load live data.
+        {/* Not signed in */}
+        {!isAuthed && (
+          <div className="mb-6 flex items-start justify-between gap-4 bg-slate-900 rounded-xl px-5 py-4">
+            <div>
+              <p className="text-sm font-bold text-white">Sign in required</p>
+              <p className="text-xs text-slate-400 mt-0.5">You need an admin account to view this dashboard.</p>
+            </div>
+            <Link
+              href="/auth/login"
+              className="shrink-0 bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-emerald-600 transition-colors"
+            >
+              Sign In
+            </Link>
+          </div>
+        )}
+
+        {/* Signed in but not an admin */}
+        {isAuthed && forbidden && (
+          <div className="mb-6 flex items-center gap-3 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+            <span className="text-rose-500 text-lg">⛔</span>
+            <p className="text-sm text-rose-700 font-medium">
+              Access denied — your account doesn't have admin privileges.
             </p>
           </div>
         )}
 
         {/* Error */}
-        {error && (
+        {canView && error && (
           <div className="mb-6 flex items-center gap-3 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
             <span className="text-rose-500">⚠</span>
             <p className="text-sm text-rose-700 font-medium">{error}</p>
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
-          {stats
-            ? STAT_ITEMS(stats).map((s) => (
-                <div key={s.label} className={`border rounded-2xl px-4 py-4 shadow-sm ${s.bg}`}>
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{s.label}</p>
-                  <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
-                </div>
-              ))
-            : Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="border border-slate-100 rounded-2xl h-20 bg-white animate-pulse" />
-              ))}
-        </div>
+        {canView && (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
+              {stats
+                ? STAT_ITEMS(stats).map((s) => (
+                    <div key={s.label} className={`border rounded-2xl px-4 py-4 shadow-sm ${s.bg}`}>
+                      <p className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-1">{s.label}</p>
+                      <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                    </div>
+                  ))
+                : Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="border border-slate-100 rounded-2xl h-20 bg-white animate-pulse" />
+                  ))}
+            </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-5">
-          {STATUS_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setStatus(tab.key)}
-              className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider border transition-all ${
-                status === tab.key ? tab.color : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
-              }`}
-            >
-              {tab.label}
-              {tab.key === "pending" && stats?.reports_pending ? (
-                <span className="ml-1.5 bg-amber-400 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
-                  {stats.reports_pending}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
-
-        {/* Table */}
-        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
-          {/* Table header */}
-          <div className="hidden md:grid md:grid-cols-[1.6fr_0.9fr_1.1fr_0.7fr_0.8fr] gap-4 px-6 py-3 border-b border-slate-100 bg-slate-50/60">
-            {["Meal", "Price Change", "Reporter", "Status", "Actions"].map((h) => (
-              <span key={h} className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{h}</span>
-            ))}
-          </div>
-
-          {loading && (
-            <div className="space-y-px">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-16 bg-slate-50 animate-pulse" />
+            {/* Tabs */}
+            <div className="flex gap-2 mb-5">
+              {STATUS_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setStatus(tab.key)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider border transition-all ${
+                    status === tab.key ? tab.color : "bg-white border-slate-200 text-slate-500 hover:border-slate-300"
+                  }`}
+                >
+                  {tab.label}
+                  {tab.key === "pending" && stats?.reports_pending ? (
+                    <span className="ml-1.5 bg-amber-400 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                      {stats.reports_pending}
+                    </span>
+                  ) : null}
+                </button>
               ))}
             </div>
-          )}
 
-          {!loading && reports.length === 0 && (
-            <div className="py-16 text-center">
-              <div className="text-3xl mb-3">📋</div>
-              <p className="text-slate-600 font-semibold">No {status} reports</p>
-              <p className="text-slate-400 text-sm mt-1">Check another tab or wait for new submissions</p>
-            </div>
-          )}
-
-          <div className="divide-y divide-slate-50">
-            {reports.map((report) => (
-              <div
-                key={report.id}
-                className="grid md:grid-cols-[1.6fr_0.9fr_1.1fr_0.7fr_0.8fr] gap-4 px-6 py-4 items-center hover:bg-slate-50/50 transition-colors"
-              >
-                {/* Meal */}
-                <div className="min-w-0">
-                  <p className="font-bold text-slate-900 text-sm truncate">
-                    {report.meal_name || `Meal #${report.meal_id}`}
-                  </p>
-                  <p className="text-xs text-slate-400 truncate">{report.meal_location || "Unknown location"}</p>
-                  <p className="text-[10px] text-slate-300 mt-0.5">{formatDate(report.created_at)}</p>
-                </div>
-
-                {/* Price change */}
-                <div>
-                  <p className="font-black text-slate-900 text-sm">PKR {report.reported_price.toLocaleString()}</p>
-                  <p className="text-xs text-slate-400">was {report.meal_price != null ? `PKR ${report.meal_price.toLocaleString()}` : "—"}</p>
-                  {report.meal_price != null && (
-                    <p className={`text-[10px] font-bold mt-0.5 ${report.reported_price > report.meal_price ? "text-rose-500" : "text-emerald-600"}`}>
-                      {report.reported_price > report.meal_price ? "▲" : "▼"}{" "}
-                      {Math.abs(report.reported_price - report.meal_price).toLocaleString()} PKR
-                    </p>
-                  )}
-                </div>
-
-                {/* Reporter */}
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-700">{report.reporter_name || "Anonymous"}</p>
-                  <p className="text-xs text-slate-400 line-clamp-2 mt-0.5">{report.notes || "No notes"}</p>
-                </div>
-
-                {/* Status */}
-                <div>
-                  <StatusChip status={report.status} />
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2">
-                  {status === "pending" ? (
-                    <>
-                      <button
-                        onClick={() => handleAction(report.id, "approve")}
-                        disabled={actionBusy === report.id}
-                        className="rounded-xl bg-emerald-600 text-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleAction(report.id, "reject")}
-                        disabled={actionBusy === report.id}
-                        className="rounded-xl bg-rose-50 border border-rose-200 text-rose-700 px-3 py-1.5 text-xs font-bold hover:bg-rose-100 disabled:opacity-50 transition-all"
-                      >
-                        Reject
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-xs text-slate-300 font-medium">No actions</span>
-                  )}
-                </div>
+            {/* Table */}
+            <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="hidden md:grid md:grid-cols-[1.6fr_0.9fr_1.1fr_0.7fr_0.8fr] gap-4 px-6 py-3 border-b border-slate-100 bg-slate-50/60">
+                {["Meal", "Price Change", "Reporter", "Status", "Actions"].map((h) => (
+                  <span key={h} className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{h}</span>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+
+              {loading && (
+                <div className="space-y-px">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="h-16 bg-slate-50 animate-pulse" />
+                  ))}
+                </div>
+              )}
+
+              {!loading && reports.length === 0 && (
+                <div className="py-16 text-center">
+                  <div className="text-3xl mb-3">📋</div>
+                  <p className="text-slate-600 font-semibold">No {status} reports</p>
+                  <p className="text-slate-400 text-sm mt-1">Check another tab or wait for new submissions</p>
+                </div>
+              )}
+
+              <div className="divide-y divide-slate-50">
+                {reports.map((report) => (
+                  <div
+                    key={report.id}
+                    className="grid md:grid-cols-[1.6fr_0.9fr_1.1fr_0.7fr_0.8fr] gap-4 px-6 py-4 items-center hover:bg-slate-50/50 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-900 text-sm truncate">
+                        {report.meal_name || `Meal #${report.meal_id}`}
+                      </p>
+                      <p className="text-xs text-slate-400 truncate">{report.meal_location || "Unknown location"}</p>
+                      <p className="text-[10px] text-slate-300 mt-0.5">{formatDate(report.created_at)}</p>
+                    </div>
+
+                    <div>
+                      <p className="font-black text-slate-900 text-sm">PKR {report.reported_price.toLocaleString()}</p>
+                      <p className="text-xs text-slate-400">was {report.meal_price != null ? `PKR ${report.meal_price.toLocaleString()}` : "—"}</p>
+                      {report.meal_price != null && (
+                        <p className={`text-[10px] font-bold mt-0.5 ${report.reported_price > report.meal_price ? "text-rose-500" : "text-emerald-600"}`}>
+                          {report.reported_price > report.meal_price ? "▲" : "▼"}{" "}
+                          {Math.abs(report.reported_price - report.meal_price).toLocaleString()} PKR
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-700">{report.reporter_name || "Anonymous"}</p>
+                      <p className="text-xs text-slate-400 line-clamp-2 mt-0.5">{report.notes || "No notes"}</p>
+                    </div>
+
+                    <div>
+                      <StatusChip status={report.status} />
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {status === "pending" ? (
+                        <>
+                          <button
+                            onClick={() => handleAction(report.id, "approve")}
+                            disabled={actionBusy === report.id}
+                            className="rounded-xl bg-emerald-600 text-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => handleAction(report.id, "reject")}
+                            disabled={actionBusy === report.id}
+                            className="rounded-xl bg-rose-50 border border-rose-200 text-rose-700 px-3 py-1.5 text-xs font-bold hover:bg-rose-100 disabled:opacity-50 transition-all"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-300 font-medium">No actions</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </main>
   );

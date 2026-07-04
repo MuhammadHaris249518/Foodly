@@ -4,22 +4,16 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
-export const ADMIN_SECRET =
-  process.env.NEXT_PUBLIC_ADMIN_SECRET || "";
+// NEXT_PUBLIC_ADMIN_SECRET removed — admin auth is now role-based JWT.
+// See authHeaders() below; admin routes require a logged-in user whose
+// account has role="admin" (checked server-side).
 
 /** Build a full API URL from a path like "/api/v1/meals" */
 export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
-/** Standard headers for admin-authenticated requests */
-export function adminHeaders(): Record<string, string> {
-  const h: Record<string, string> = {};
-  if (ADMIN_SECRET) h["x-admin-secret"] = ADMIN_SECRET;
-  return h;
-}
-
-/** Standard headers for user-authenticated requests */
+/** Standard headers for user-authenticated (and admin) requests */
 export function authHeaders(): Record<string, string> {
   const token =
     typeof window !== "undefined"

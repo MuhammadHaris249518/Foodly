@@ -1,20 +1,15 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 from ...core.database import get_db
-from ...core.config import settings
 from ...models.pending_verification import PendingVerification
 from ...models.user import User
 from ...models import meal as meal_model
 from ...schemas import report as report_schema
+from ...services.auth import require_admin
 
 router = APIRouter()
-
-
-def _require_admin_secret(x_admin_secret: Optional[str] = Header(None)) -> None:
-    if not x_admin_secret or x_admin_secret != settings.ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
 
 
 def _recompute_confidence(db: Session, meal_id: int) -> None:
@@ -32,7 +27,7 @@ def _recompute_confidence(db: Session, meal_id: int) -> None:
 @router.get("/stats", response_model=report_schema.AdminStats)
 def get_admin_stats(
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     meals_total = db.query(meal_model.Meal).count()
     total_users = db.query(User).count()
@@ -56,7 +51,7 @@ def get_admin_stats(
 @router.get("/meals", response_model=List[report_schema.AdminMealDetail])
 def list_admin_meals(
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     rows = (
         db.query(
@@ -87,7 +82,7 @@ def list_admin_meals(
 def bulk_approve_reports(
     body: report_schema.BulkApproveRequest,
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     reports = (
         db.query(PendingVerification)
@@ -100,7 +95,6 @@ def bulk_approve_reports(
     approved = 0
     skipped = len(body.ids) - len(reports)
     meal_ids_to_update = set()
-    # Pre-fetch all affected meals in one query instead of N separate queries
     needed_meal_ids = [r.meal_id for r in reports]
     meals_map = {
         m.id: m
@@ -125,7 +119,7 @@ def bulk_approve_reports(
 def list_reports(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     query = db.query(PendingVerification, meal_model.Meal).join(
         meal_model.Meal, PendingVerification.meal_id == meal_model.Meal.id
@@ -158,7 +152,7 @@ def list_reports(
 def approve_report(
     report_id: int,
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     report = db.query(PendingVerification).filter(PendingVerification.id == report_id).first()
     if not report:
@@ -186,7 +180,7 @@ def approve_report(
 def reject_report(
     report_id: int,
     db: Session = Depends(get_db),
-    _: None = Depends(_require_admin_secret),
+    admin_user: User = Depends(require_admin),
 ):
     report = db.query(PendingVerification).filter(PendingVerification.id == report_id).first()
     if not report:
