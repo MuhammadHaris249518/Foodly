@@ -3,6 +3,7 @@ import os
 import sys
 import uuid
 from fastapi import APIRouter, Query, Request, HTTPException, BackgroundTasks
+from ...core.rate_limit import limiter  
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -15,6 +16,7 @@ from backend.ai.graph.checkpointer import get_checkpointer
 router = APIRouter()
 
 @router.get("/live-price")
+@limiter.limit("5/minute") 
 async def get_live_price(request: Request, query: str = Query(..., description="The food item to search for")):
     """
     Server-Sent Events endpoint that triggers the AI agent to search and extract live prices.

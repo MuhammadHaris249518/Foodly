@@ -1,11 +1,13 @@
 import os
 import uuid
 import traceback
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+import bleach  # CHANGED: added for XSS sanitization
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from ...core.database import get_db
 from ...core.config import settings
+from ...core.rate_limit import limiter  # CHANGED: rate limiting
 import requests
 from ...models.pending_verification import PendingVerification
 from ...models import meal as meal_model
@@ -20,7 +22,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @router.post("", response_model=report_schema.Report, status_code=201)
+@limiter.limit("10/minute")  # CHANGED: rate limit per user/IP — reports are cheap but spammable
 async def create_report(
+    request: Request,  # CHANGED: required by slowapi to read the rate-limit key
     meal_id: int = Form(...),
     reported_price: float = Form(...),
     notes: Optional[str] = Form(None),
@@ -38,6 +42,13 @@ async def create_report(
         if not meal:
             raise HTTPException(status_code=404, detail="Meal not found")
 
+        # CHANGED: sanitize free-text fields before they ever touch the DB.
+        # bleach.clean() with an empty allowed-tags list strips all HTML/script
+        # content while preserving plain text — prevents stored XSS against
+        # the admin dashboard, which renders these fields unescaped.
+        clean_notes = bleach.clean(notes, tags=[], strip=True) if notes else None
+        clean_reporter_name = bleach.clean(reporter_name, tags=[], strip=True) if reporter_name else None
+
         # -----------------------------
         # AI Report Validator Integration
         # -----------------------------
@@ -54,21 +65,19 @@ async def create_report(
             contents = photo.file.read()
             if len(contents) > 5 * 1024 * 1024:
                 raise HTTPException(status_code=400, detail="Photo too large")
-            # os.path.basename strips any path traversal from the original filename
             safe_name = os.path.basename(photo.filename or "upload")
             filename = f"{uuid.uuid4().hex}_{safe_name}"
             save_path = os.path.join(UPLOAD_DIR, filename)
             with open(save_path, "wb") as f:
                 f.write(contents)
-            # Use forward slash explicitly — os.path.join uses backslash on Windows
             photo_url = f"/uploads/reports/{filename}"
 
         new_report = PendingVerification(
             meal_id=meal_id,
             reporter_user_id=current_user.id if current_user else None,
             reported_price=reported_price,
-            notes=notes,
-            reporter_name=reporter_name,
+            notes=clean_notes,  # CHANGED: sanitized value
+            reporter_name=clean_reporter_name,  # CHANGED: sanitized value
             photo_url=photo_url,
             status="pending",
         )

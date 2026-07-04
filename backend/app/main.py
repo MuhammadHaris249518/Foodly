@@ -4,21 +4,26 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from slowapi import _rate_limit_exceeded_handler  # CHANGED
+from slowapi.errors import RateLimitExceeded  # CHANGED
+from slowapi.middleware import SlowAPIMiddleware  # CHANGED
 from .core.config import settings
 from .core.database import get_db
+from .core.rate_limit import limiter  # CHANGED
+from .core.security_headers import SecurityHeadersMiddleware  # CHANGED
+from .core.logging_config import configure_logging, RequestLoggingMiddleware  # CHANGED
 from .api.endpoints import meals, reports, auth, users, admin, agent
+
+configure_logging()  # CHANGED: structlog setup, must run before any logger.info() calls
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-# ── CORS: env-driven origin whitelist ───────────────────────────────────
-# CHANGED: previously allow_origins=["*"] combined with allow_credentials=True.
-# That combination is unsafe: Starlette can't literally send "*" alongside
-# credentials (disallowed by the CORS spec), so it falls back to reflecting
-# whatever Origin header the request sent — meaning ANY website could make
-# credentialed requests (with the user's JWT/cookies attached) and read the
-# response. Fixed by supplying a real closed list of trusted origins from
-# settings.cors_origins (env-driven — see core/config.py). Credentials are
-# now only ever echoed back for an origin on this explicit list.
+# CHANGED: rate limiting — see core/rate_limit.py for key strategy (user > IP)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS — env-driven whitelist (see previous fix); unchanged in this sprint
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -27,6 +32,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# CHANGED: security headers on every response
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CHANGED: structured request logging (foundation — full print() removal is Sprint 13/26)
+app.add_middleware(RequestLoggingMiddleware)
+
 app.include_router(meals.router, prefix="/api/v1/meals", tags=["meals"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
@@ -34,7 +45,6 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
 
-# Serve uploaded files during development
 import os
 uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
 uploads_dir = os.path.abspath(uploads_dir)

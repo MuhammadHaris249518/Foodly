@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from ...core.database import get_db
+from ...core.rate_limit import limiter  # CHANGED: rate limiting
 from ...models.user import User
 from ...schemas.user import UserCreate, UserLogin, UserOut
 from ...schemas.auth import Token
@@ -15,8 +16,6 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # role is never taken from the request — always defaults to "user"
-    # at the DB level (see User model). Prevents self-promotion to admin.
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
@@ -29,7 +28,8 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login_user(payload: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # CHANGED: brute-force protection — the primary Sprint 2 gap
+def login_user(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")

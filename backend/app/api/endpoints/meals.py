@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from ...core.database import get_db
 from ...schemas import meal as meal_schema
 from ...services.auth import get_current_user, require_admin
+from ...core.rate_limit import limiter
 from ...models.user import User
 from ...services.meal import meal_service
 
@@ -12,7 +13,9 @@ router = APIRouter()
 
 @router.get("", response_model=List[meal_schema.Meal])
 @router.get("/", response_model=List[meal_schema.Meal])
+@limiter.limit("30/minute")
 async def read_meals(
+    request: Request,
     skip: int = 0,
     limit: int = 100,
     budget: float | None = None,
