@@ -1,5 +1,5 @@
 "use client";
-
+import ChatPanel from "../components/ChatPanel"; 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -471,6 +471,8 @@ export default function HomePage() {
           </motion.div>
         )}
       </section>
+      
+<ChatPanel lat={selectedLocation.lat} lng={selectedLocation.lng} />
     </main>
   );
 }

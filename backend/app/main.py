@@ -12,7 +12,7 @@ from .core.database import get_db
 from .core.rate_limit import limiter  # CHANGED
 from .core.security_headers import SecurityHeadersMiddleware  # CHANGED
 from .core.logging_config import configure_logging, RequestLoggingMiddleware  # CHANGED
-from .api.endpoints import meals, reports, auth, users, admin, agent
+from .api.endpoints import meals, reports, auth, users, admin, agent,chat
 
 configure_logging()  # CHANGED: structlog setup, must run before any logger.info() calls
 
@@ -44,6 +44,7 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(agent.router, prefix="/api/v1/agent", tags=["agent"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])  # CHANGED: new in Sprint 3
 
 import os
 uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
