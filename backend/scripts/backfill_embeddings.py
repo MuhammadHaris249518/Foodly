@@ -1,3 +1,16 @@
+"""
+Backfill embeddings for meals already in the database.
+
+NOT a seed script — use scripts/seed_islamabad.py to add new meals.
+This script only fills in the `embedding` column for meals that are
+missing one (e.g. added via the community report flow, or bulk-imported
+without an embedding). Safe to re-run; skips meals that already have an
+embedding unless --force is passed.
+
+Usage (from backend/ directory):
+    python -m scripts.backfill_embeddings
+    python scripts/backfill_embeddings.py
+"""
 import os
 import sys
 from typing import Iterable
