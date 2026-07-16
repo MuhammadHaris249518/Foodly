@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 from app.models.meal import Meal
 from app.models.pending_verification import PendingVerification
 from app.schemas.meal import InsightResponse
+from app.core.database import SessionLocal
 
 
 # --- Helper Functions for Context Retrieval ---
@@ -436,25 +437,30 @@ async def generate_rag_insight(
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
 
+        def _run_with_own_session(fn, *args):
+            """Run a DB-querying function in its own thread-local session."""
+            db_local = SessionLocal()
+            try:
+                return fn(db_local, *args)
+            finally:
+                db_local.close()
+
         with ThreadPoolExecutor(max_workers=3) as executor:
             loop = asyncio.get_event_loop()
 
             similar_future = loop.run_in_executor(
-                executor,
-                retrieve_similar_meals,
-                db, meal_id, meal_category, meal_embedding, 5
+                executor, _run_with_own_session,
+                retrieve_similar_meals, meal_id, meal_category, meal_embedding, 5
             )
 
             sector_future = loop.run_in_executor(
-                executor,
-                fetch_sector_stats,
-                db, meal_category, meal_location
+                executor, _run_with_own_session,
+                fetch_sector_stats, meal_category, meal_location
             )
 
             history_future = loop.run_in_executor(
-                executor,
-                fetch_price_history,
-                db, meal_id, 10
+                executor, _run_with_own_session,
+                fetch_price_history, meal_id, 10
             )
 
             similar_meals, sector_stats, price_history = await asyncio.gather(
