@@ -20,6 +20,7 @@ redis
 # ── Authentication ────────────────────────────────────────────
 python-jose==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 cryptography==47.0.0
 
 # ── AI / LLM ─────────────────────────────────────────────────
@@ -41,6 +42,8 @@ tavily-python
 # ── HTTP / Networking ─────────────────────────────────────────
 httpx==0.28.1
 httpcore==1.0.9
+python-multipart
+sse-starlette
 requests==2.33.1
 requests-toolbelt==1.0.0
 certifi==2026.4.22

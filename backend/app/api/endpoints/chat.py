@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../..")))
 
-from backend.ai.graphs.assistant_graph import build_assistant_graph
+from backend.ai.graph.assistant_graph import build_assistant_graph
 from backend.ai.graph.checkpointer import get_checkpointer
 from ...core.rate_limit import limiter
 from ...services.auth import get_current_user

@@ -31,14 +31,18 @@ def _mask_db_url(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 logger.info("checkpointer_initialized", db_url=_mask_db_url(DB_URL))
-pool = AsyncConnectionPool(
-    conninfo=DB_URL,
-    max_size=20,
-    kwargs={"autocommit": True}
-)
+
+_pool = None
 
 @asynccontextmanager
 async def get_checkpointer():
-    saver = AsyncPostgresSaver(pool)
+    global _pool
+    if _pool is None:
+        _pool = AsyncConnectionPool(
+            conninfo=DB_URL,
+            max_size=20,
+            kwargs={"autocommit": True}
+        )
+    saver = AsyncPostgresSaver(_pool)
     await saver.setup()
     yield saver
