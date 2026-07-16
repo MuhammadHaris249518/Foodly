@@ -177,7 +177,7 @@ class MealService:
         await set_cached(cache_key, serialized, ttl_seconds=3600)
         return meals
 
-@staticmethod
+    @staticmethod
     async def get_nearby_meals(
         db: Session, lat: float, lng: float, radius_km: float = 3.0,
         budget: Optional[float] = None, search: Optional[str] = None
