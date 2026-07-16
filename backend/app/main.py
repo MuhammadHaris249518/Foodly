@@ -9,6 +9,7 @@ from slowapi.errors import RateLimitExceeded  # CHANGED
 from slowapi.middleware import SlowAPIMiddleware  # CHANGED
 from .core.config import settings
 from .core.database import get_db
+from .core.cache import redis_client
 from .core.rate_limit import limiter  # CHANGED
 from .core.security_headers import SecurityHeadersMiddleware  # CHANGED
 from .core.logging_config import configure_logging, RequestLoggingMiddleware  # CHANGED
@@ -58,9 +59,25 @@ def read_root():
 
 
 @app.get("/health")
-def health_check(db: Session = Depends(get_db)):
+async def health_check(db: Session = Depends(get_db)):
+    db_status = "connected"
     try:
         db.execute(text("SELECT 1"))
-        return {"status": "ok", "database": "connected"}
     except Exception:
-        return JSONResponse(status_code=503, content={"status": "error", "database": "unavailable"})
+        db_status = "unavailable"
+
+    redis_status = "connected"
+    try:
+        await redis_client.ping()
+    except Exception:
+        redis_status = "unavailable"
+
+    healthy = db_status == "connected" and redis_status == "connected"
+    payload = {
+        "status": "ok" if healthy else "error",
+        "database": db_status,
+        "redis": redis_status,
+    }
+    if healthy:
+        return payload
+    return JSONResponse(status_code=503, content=payload)

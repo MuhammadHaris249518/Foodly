@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 
@@ -8,6 +8,7 @@ from ...services.auth import get_current_user, require_admin
 from ...core.rate_limit import limiter
 from ...models.user import User
 from ...services.meal import meal_service
+from ...core.cache import invalidate_pattern
 
 router = APIRouter()
 
@@ -25,7 +26,8 @@ async def read_meals(
     return await meal_service.get_meals(db=db, skip=skip, limit=limit, budget=budget, search=search)
 
 @router.get("/nearby", response_model=List[meal_schema.Meal])
-def read_meals_nearby(
+async def read_meals_nearby(
+    response: Response,
     lat: float,
     lng: float,
     radius_km: float = 3.0,
@@ -33,15 +35,22 @@ def read_meals_nearby(
     search: str | None = None,
     db: Session = Depends(get_db),
 ):
-    return meal_service.get_nearby_meals(db=db, lat=lat, lng=lng, radius_km=radius_km, budget=budget, search=search)
+    meals, cache_hit = await meal_service.get_nearby_meals(
+        db=db, lat=lat, lng=lng, radius_km=radius_km, budget=budget, search=search
+    )
+    response.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+    return meals
 
 @router.post("/", response_model=meal_schema.Meal)
-def create_meal(
+async def create_meal(
     meal: meal_schema.MealCreate,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    return meal_service.create_meal(db=db, meal_data=meal)
+    result = meal_service.create_meal(db=db, meal_data=meal)
+    await invalidate_pattern("nearby:*")
+    await invalidate_pattern("search_cache:*")
+    return result
 
 @router.post("/{meal_id}/save", response_model=meal_schema.Meal)
 def save_meal(

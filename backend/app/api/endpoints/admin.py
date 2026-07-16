@@ -8,6 +8,7 @@ from ...models.user import User
 from ...models import meal as meal_model
 from ...schemas import report as report_schema
 from ...services.auth import require_admin
+from ...core.cache import invalidate_pattern
 
 router = APIRouter()
 
@@ -77,9 +78,8 @@ def list_admin_meals(
         for meal, report_count, last_reported_at in rows
     ]
 
-
 @router.post("/reports/bulk-approve", response_model=report_schema.BulkApproveResponse)
-def bulk_approve_reports(
+async def bulk_approve_reports(
     body: report_schema.BulkApproveRequest,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
@@ -112,9 +112,12 @@ def bulk_approve_reports(
     db.commit()
     for meal_id in meal_ids_to_update:
         _recompute_confidence(db, meal_id)
+
+    if meal_ids_to_update:
+        await invalidate_pattern("nearby:*")
+        await invalidate_pattern("search_cache:*")
+
     return report_schema.BulkApproveResponse(approved=approved, skipped=skipped)
-
-
 @router.get("/reports", response_model=List[report_schema.AdminReport])
 def list_reports(
     status: Optional[str] = None,
@@ -147,9 +150,8 @@ def list_reports(
         )
     return results
 
-
 @router.post("/reports/{report_id}/approve", response_model=report_schema.Report)
-def approve_report(
+async def approve_report(
     report_id: int,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
@@ -173,11 +175,13 @@ def approve_report(
 
     _recompute_confidence(db, report.meal_id)
 
+    await invalidate_pattern("nearby:*")
+    await invalidate_pattern("search_cache:*")
+
     return report
 
-
 @router.post("/reports/{report_id}/reject", response_model=report_schema.Report)
-def reject_report(
+async def reject_report(
     report_id: int,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
@@ -194,5 +198,8 @@ def reject_report(
     db.refresh(report)
 
     _recompute_confidence(db, report.meal_id)
+
+    await invalidate_pattern("nearby:*")
+    await invalidate_pattern("search_cache:*")
 
     return report

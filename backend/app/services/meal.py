@@ -177,19 +177,33 @@ class MealService:
         await set_cached(cache_key, serialized, ttl_seconds=3600)
         return meals
 
-    @staticmethod
-    def get_nearby_meals(
+@staticmethod
+    async def get_nearby_meals(
         db: Session, lat: float, lng: float, radius_km: float = 3.0,
         budget: Optional[float] = None, search: Optional[str] = None
-    ) -> List[meal_schema.Meal]:
+    ) -> tuple[List[dict], bool]:
+        """
+        Returns (meals, cache_hit). 5-minute TTL — nearby results go
+        stale fast as new meals/reports come in, unlike the 24h insight cache.
+        """
         if radius_km <= 0:
             raise HTTPException(status_code=400, detail="radius_km must be greater than 0")
-            
+
+        search_hash = hashlib.md5((search or "").encode()).hexdigest()
+        cache_key = f"nearby:{lat}:{lng}:{radius_km}:{budget or 0}:{search_hash}"
+
+        cached = await get_cached(cache_key)
+        if cached is not None:
+            return cached, True
+
         search_fmt = f"%{search}%" if search else None
-        return meal_repository.list_nearby(
-            db=db, lat=lat, lng=lng, radius_km=radius_km, 
+        meals = meal_repository.list_nearby(
+            db=db, lat=lat, lng=lng, radius_km=radius_km,
             budget=budget or 0, search_fmt=search_fmt or ""
         )
+        serialized = [meal_schema.Meal.model_validate(m).model_dump(mode="json") for m in meals]
+        await set_cached(cache_key, serialized, ttl_seconds=300)  # 5 min
+        return serialized, False
 
     @staticmethod
     def create_meal(db: Session, meal_data: meal_schema.MealCreate):
