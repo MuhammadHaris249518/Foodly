@@ -76,6 +76,7 @@ async def create_report(
             meal_id=meal_id,
             reporter_user_id=current_user.id if current_user else None,
             reported_price=reported_price,
+            extracted_price=reported_price,  # Fix: explicitly set NOT NULL field
             notes=clean_notes,  # CHANGED: sanitized value
             reporter_name=clean_reporter_name,  # CHANGED: sanitized value
             photo_url=photo_url,

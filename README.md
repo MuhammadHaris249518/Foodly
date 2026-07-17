@@ -462,7 +462,7 @@ Foodly/
 │   │   ├── chains/                # insight_chain, query_expansion_chain, report_validation_chain, refine_query_chain
 │   │   ├── graph/                 # state.py, checkpointer.py, assistant_graph.py
 │   │   └── tools/                 # foodly_tools.py, search_tools.py
-│   ├── scripts/                   # init_db, seed_islamabad, ingest_meals, generate_embeddings, promote_admin, add_user_role_column
+│   ├── scripts/                   # init_db, seed_islamabad (canonical seed), backfill_embeddings (repair only), promote_admin, add_user_role_column
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
@@ -610,7 +610,7 @@ Corrected against actual code — replaces a prior version of this table that ha
 |-------|------|----------|-------|
 | Hardcoded DB credential fragment in a log statement | `backend/ai/graph/checkpointer.py` | 🔴 Critical | A literal password-shaped string is used as the redaction target — masking breaks the moment the password rotates, and the fragment itself is committed to git history. Remove the print; rotate the credential if it was ever real. |
 | Shared SQLAlchemy `Session` across `ThreadPoolExecutor` threads | `backend/ai/chains/insight_chain.py` (`generate_rag_insight`) | 🔴 High | SQLAlchemy sessions are not thread-safe. Give each of the 3 parallel context-fetch helpers its own `SessionLocal()`. |
-| Three overlapping seed/embedding scripts, no documented canonical path | `backend/scripts/ingest_meals.py`, `generate_embeddings.py`, `seed_islamabad.py` | 🟡 Medium | Consolidate or clearly re-scope each. |
+| ~~Three overlapping seed/embedding scripts~~ | — | ✅ Resolved | `ingest_meals.py` removed (destructive, redundant); `generate_embeddings.py` renamed to `backfill_embeddings.py` with docstring clarifying it's a repair tool, not a seed path. `seed_islamabad.py` is the sole canonical seed script. |
 | Committed error log with local file paths | `backend/logs/reports_error.log` | 🟡 Medium | Check git history predates the current `.gitignore` rule; scrub if needed. |
 | Unrelated npm package shadowing the Python `bleach` sanitizer | root `package.json` | 🟡 Medium | `bleach` is listed as an npm dependency but is unused; the real sanitizer is Python's `bleach==6.1.0`. Remove. |
 | JWT stored in `localStorage` | `frontend/src/lib/api.ts` | 🟡 Medium | XSS-vulnerable token storage. Defensible for MVP stage given server-side sanitization elsewhere; flagged for explicit decision at the Sprint 27 security audit rather than left implicit. |

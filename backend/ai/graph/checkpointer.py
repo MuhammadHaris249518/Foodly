@@ -13,19 +13,36 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 # this module is ever reached.
 from app.core.config import settings
 
+from urllib.parse import urlsplit, urlunsplit
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 DB_URL = settings.DATABASE_URL
 if DB_URL.startswith("postgresql+psycopg2://"):
     DB_URL = DB_URL.replace("postgresql+psycopg2://", "postgresql://")
 
-print(f"DB_URL in checkpointer: {DB_URL.replace('Vu7tDoAbjrPv5OXq', '[HIDDEN]')}")
-pool = AsyncConnectionPool(
-    conninfo=DB_URL,
-    max_size=20,
-    kwargs={"autocommit": True}
-)
+def _mask_db_url(url: str) -> str:
+    parts = urlsplit(url)
+    if parts.password:
+        netloc = parts.netloc.replace(f":{parts.password}@", ":[HIDDEN]@")
+    else:
+        netloc = parts.netloc
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+logger.info("checkpointer_initialized", db_url=_mask_db_url(DB_URL))
+
+_pool = None
 
 @asynccontextmanager
 async def get_checkpointer():
-    saver = AsyncPostgresSaver(pool)
+    global _pool
+    if _pool is None:
+        _pool = AsyncConnectionPool(
+            conninfo=DB_URL,
+            max_size=20,
+            kwargs={"autocommit": True, "prepare_threshold": None}
+        )
+    saver = AsyncPostgresSaver(_pool)
     await saver.setup()
     yield saver

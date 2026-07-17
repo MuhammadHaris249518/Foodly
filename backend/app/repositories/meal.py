@@ -52,8 +52,8 @@ class MealRepository:
         from sqlalchemy import union_all
         from sqlalchemy.orm import aliased
         
-        union_q = union_all(*[q.subquery() for q in queries])
-        MealAlias = aliased(meal_model.Meal, union_q)
+        union_q = union_all(*[q.statement for q in queries])
+        MealAlias = aliased(meal_model.Meal, union_q.subquery())
         rows = db.query(MealAlias).all()
         
         seen = set()

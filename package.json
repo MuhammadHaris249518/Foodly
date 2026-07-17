@@ -13,8 +13,5 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
-  },
-  "dependencies": {
-    "bleach": "^0.3.0"
   }
 }

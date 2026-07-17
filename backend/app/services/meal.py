@@ -137,7 +137,7 @@ class MealService:
         db: Session, skip: int = 0, limit: int = 100, budget: Optional[float] = None, search: Optional[str] = None
     ) -> List[Any]:
         if not search:
-            return meal_repository.list_paginated(db=db, skip=skip, limit=limit, budget=budget or 0)
+            return meal_repository.list_paginated(db=db, skip=skip, limit=limit, budget=budget)
             
         hash_str = f"search:{search}:{budget}:{skip}:{limit}"
         cache_key = f"search_cache:{hashlib.md5(hash_str.encode()).hexdigest()}"
@@ -160,7 +160,7 @@ class MealService:
             
             if valid_embeddings:
                 meals = meal_repository.vector_union_search(
-                    db=db, embeddings=valid_embeddings, limit=limit, budget=budget or 0
+                    db=db, embeddings=valid_embeddings, limit=limit, budget=budget
                 )
                 serialized = [meal_schema.Meal.model_validate(m).model_dump() for m in meals]
                 await set_cached(cache_key, serialized, ttl_seconds=3600)
@@ -171,7 +171,7 @@ class MealService:
         # Fallback to simple ILIKE search if embedding/expansion fails or returns no embeddings
         search_fmt = f"%{search}%"
         meals = meal_repository.list_paginated(
-            db=db, skip=skip, limit=limit, budget=budget or 0, search_fmt=search_fmt
+            db=db, skip=skip, limit=limit, budget=budget, search_fmt=search_fmt
         )
         serialized = [meal_schema.Meal.model_validate(m).model_dump() for m in meals]
         await set_cached(cache_key, serialized, ttl_seconds=3600)
@@ -199,7 +199,7 @@ class MealService:
         search_fmt = f"%{search}%" if search else None
         meals = meal_repository.list_nearby(
             db=db, lat=lat, lng=lng, radius_km=radius_km,
-            budget=budget or 0, search_fmt=search_fmt or ""
+            budget=budget, search_fmt=search_fmt or ""
         )
         serialized = [meal_schema.Meal.model_validate(m).model_dump(mode="json") for m in meals]
         await set_cached(cache_key, serialized, ttl_seconds=300)  # 5 min
